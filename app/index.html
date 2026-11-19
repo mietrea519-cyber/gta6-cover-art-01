@@ -7,74 +7,67 @@
 <link rel="stylesheet" href="./style.css">
 </head>
 <body>
-<header class="brand">
-  <p class="brand-name">VICE COAST <span>COVER STUDIO</span></p>
-  <p class="brand-sub">Your photos in, poster out — a multi-panel cover art maker that runs entirely on your machine.</p>
+<header class="masthead">
+  <div>
+    <h1>Vice Coast Cover Studio</h1>
+    <p class="lede">Your photo, your words — a five-panel Vice Coast cover, exported as a PNG. Everything happens on this machine; photos are never uploaded.</p>
+  </div>
 </header>
-<main class="layout">
-  <aside class="controls">
-    <section class="step">
-      <h2><span class="step-no">1</span> Photos</h2>
-      <div class="row">
-        <button id="add-photos" type="button">Add your photos</button>
-        <input id="photo-input" type="file" accept="image/*" multiple hidden>
-      </div>
-      <div class="row">
-        <button id="sample-driver" type="button" class="ghost">Sample: neon driver</button>
-        <button id="sample-pier" type="button" class="ghost">Sample: sunset pier</button>
-      </div>
-      <div id="photo-tray" class="tray" aria-label="Your photos"></div>
-      <p class="hint">…or drag photos anywhere onto this page. Click a photo to drop it into the selected panel.</p>
+
+<main class="studio">
+  <aside class="controls" aria-label="Cover controls">
+    <section class="control-group" id="drop-zone">
+      <h2>1 · Photos</h2>
+      <label class="file-picker">Choose photos
+        <input id="photo-files" type="file" accept="image/*" multiple>
+      </label>
+      <p class="hint">…or drag and drop image files onto this panel. Pick several at once to fill several panels.</p>
+      <p class="hint">No photos handy? Start from a bundled sample:</p>
+      <div class="button-row" id="sample-row"></div>
+      <button id="fill-all" type="button">Fill every panel with the selected photo</button>
     </section>
-    <section class="step">
-      <h2><span class="step-no">2</span> Frame the panel</h2>
-      <p id="selected-panel-label" class="selected-label">Panel 1 selected — drag it on the cover, scroll to zoom.</p>
-      <label class="slider">Zoom <input id="panel-zoom" type="range" min="1" max="4" step="0.01" value="1"></label>
-      <label class="slider">Shift across <input id="panel-x" type="range" min="-100" max="100" step="1" value="0"></label>
-      <label class="slider">Shift up / down <input id="panel-y" type="range" min="-100" max="100" step="1" value="0"></label>
-      <div class="row">
-        <button id="reset-framing" type="button" class="ghost">Reset framing</button>
-        <button id="fill-all" type="button" class="ghost">Fill every panel with this photo</button>
-      </div>
+
+    <section class="control-group">
+      <h2>2 · Frame the panels</h2>
+      <div class="button-row" id="panel-chips" aria-label="Choose a panel"></div>
+      <p class="hint">Click a panel on the cover to select it, drag on the cover to move its photo, and scroll to zoom.</p>
+      <label>Zoom <input id="zoom" type="range" min="1" max="4" step="0.01" value="1"></label>
+      <label>Move left / right <input id="pan-x" type="range" min="-0.5" max="0.5" step="0.005" value="0"></label>
+      <label>Move up / down <input id="pan-y" type="range" min="-0.5" max="0.5" step="0.005" value="0"></label>
+      <button id="reset-framing" type="button">Reset framing</button>
     </section>
-    <section class="step">
-      <h2><span class="step-no">3</span> Caption</h2>
-      <label class="field">Title <input id="caption-input" type="text" maxlength="26" value="Neon Coast"></label>
-      <label class="field">Tagline <input id="tagline-input" type="text" maxlength="44" value="One city, no rules"></label>
-      <div class="row">
-        <label class="field inline">Place
-          <select id="caption-place">
-            <option value="bottom" selected>Bottom</option>
-            <option value="top">Top</option>
-          </select>
-        </label>
-        <label class="check"><input id="caption-arc" type="checkbox"> Arc the title</label>
-      </div>
+
+    <section class="control-group">
+      <h2>3 · Caption</h2>
+      <label>Title <input id="caption-title" type="text" maxlength="42" value="Vice Coast"></label>
+      <label>Tagline <input id="caption-tagline" type="text" maxlength="60" value="One city, no rules"></label>
+      <label>Placement
+        <select id="caption-placement">
+          <option value="bottom" selected>Bottom of the cover</option>
+          <option value="top">Top of the cover</option>
+        </select>
+      </label>
+      <label class="check"><input id="caption-arc" type="checkbox"> Curve the title on a gentle arc</label>
     </section>
-    <section class="step">
-      <h2><span class="step-no">4</span> Colour grade</h2>
-      <div class="row" role="group" aria-label="Colour grade">
-        <button type="button" class="chip grade-chip" data-grade="sunset">Vice Sunset</button>
-        <button type="button" class="chip grade-chip" data-grade="neon">Neon Night</button>
-        <button type="button" class="chip grade-chip" data-grade="classic">Classic Poster</button>
-      </div>
-    </section>
-    <section class="step">
-      <h2><span class="step-no">5</span> Size &amp; export</h2>
-      <div class="row" role="group" aria-label="Post size">
-        <button type="button" class="chip size-chip" data-size="1080x1080">1080 × 1080</button>
-        <button type="button" class="chip size-chip" data-size="1080x1350">1080 × 1350</button>
-        <button type="button" class="chip size-chip" data-size="1920x1080">1920 × 1080</button>
-      </div>
-      <button id="export-png" type="button" class="export">Export PNG</button>
-      <p id="status-line" class="status" role="status"></p>
+
+    <section class="control-group">
+      <h2>4 · Grade &amp; size</h2>
+      <div class="button-row" id="grade-row" aria-label="Colour grade"></div>
+      <div class="button-row" id="size-row" aria-label="Export size"></div>
+      <button id="export-png" type="button" class="primary">Export PNG</button>
+      <p id="status" role="status"></p>
     </section>
   </aside>
-  <section class="stage">
-    <canvas id="cover-canvas" width="1080" height="1080" aria-label="Your cover, live preview"></canvas>
-    <p id="drop-hint" class="drop-hint">Drop photos to add them</p>
+
+  <section class="stage-wrap" aria-label="Cover preview">
+    <canvas id="stage" width="1080" height="1080"></canvas>
   </section>
 </main>
+
+<footer class="colophon">
+  <p>An original fan tool in the spirit of neon-soaked crime posters. Empty panels show a placeholder scene drawn by the app itself.</p>
+</footer>
+
 <script type="module" src="./src/main.js"></script>
 </body>
 </html>
