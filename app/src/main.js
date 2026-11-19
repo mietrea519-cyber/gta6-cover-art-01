@@ -1,294 +1,347 @@
-// Vice Coast Cover Studio: wires the page together. A visitor adds photos, drops them into the
-// five panels, frames each one, picks a grade and a size, and exports a PNG — all locally.
+// Vice Coast Cover Studio — the editor itself.
+//
+// This module owns the page: it builds the studio's state (five panels,
+// one grade, one caption, one export size), wires every control in the
+// sidebar to that state, handles pointing at the canvas (click to select
+// a panel, drag to reposition its photo, wheel to zoom), and repaints
+// through renderCover whenever anything changes. The canvas on the page
+// is the export canvas, so what you see is exactly the PNG you get.
 
-import { drawCover, createPanelState } from './render.js';
-import { panelRects, panelIndexAt } from './panels.js';
-import { loadImageFromFile, loadSamplePhoto } from './photos.js';
-import { readShotConfig, signalShotReady } from './shots.js';
+import { GRADES, GRADE_IDS } from './grades.js';
+import { PANEL_COUNT, panelIndexAt, computePanels } from './panels.js';
+import { SAMPLE_PHOTOS, clampFraming, emptyPanel, framedPhotoRect, loadPhotoFromFile, loadSamplePhoto } from './photos.js';
+import { renderCover } from './render.js';
+import { readShotRequest, applyShotScene } from './shots.js';
 
-const POST_SIZES = {
-  '1080x1080': [1080, 1080],
-  '1080x1350': [1080, 1350],
-  '1920x1080': [1920, 1080],
+const POST_SIZES = [
+  { id: 'square', label: '1080 × 1080', w: 1080, h: 1080 },
+  { id: 'portrait', label: '1080 × 1350', w: 1080, h: 1350 },
+  { id: 'wide', label: '1920 × 1080', w: 1920, h: 1080 },
+];
+
+const elements = {
+  canvas: document.querySelector('#stage'),
+  fileInput: document.querySelector('#photo-files'),
+  dropZone: document.querySelector('#drop-zone'),
+  sampleRow: document.querySelector('#sample-row'),
+  fillAll: document.querySelector('#fill-all'),
+  panelChips: document.querySelector('#panel-chips'),
+  zoom: document.querySelector('#zoom'),
+  panX: document.querySelector('#pan-x'),
+  panY: document.querySelector('#pan-y'),
+  resetFraming: document.querySelector('#reset-framing'),
+  title: document.querySelector('#caption-title'),
+  tagline: document.querySelector('#caption-tagline'),
+  placement: document.querySelector('#caption-placement'),
+  arc: document.querySelector('#caption-arc'),
+  gradeRow: document.querySelector('#grade-row'),
+  sizeRow: document.querySelector('#size-row'),
+  exportButton: document.querySelector('#export-png'),
+  status: document.querySelector('#status'),
 };
-
-const canvas = document.getElementById('cover-canvas');
-const ctx = canvas.getContext('2d');
-const statusLine = document.getElementById('status-line');
-const tray = document.getElementById('photo-tray');
-const selectedLabel = document.getElementById('selected-panel-label');
-const zoomSlider = document.getElementById('panel-zoom');
-const xSlider = document.getElementById('panel-x');
-const ySlider = document.getElementById('panel-y');
 
 const state = {
-  panels: Array.from({ length: 5 }, createPanelState),
+  size: { w: 1080, h: 1080 },
   grade: 'sunset',
-  caption: 'Neon Coast',
+  title: 'Vice Coast',
   tagline: 'One city, no rules',
-  captionPlace: 'bottom',
-  arcTitle: false,
-  selectedIndex: 0,
+  captionPlacement: 'bottom',
+  captionArc: false,
+  selected: 0,
+  panels: Array.from({ length: PANEL_COUNT }, () => emptyPanel()),
 };
 
-const photos = []; // { name, img } — every photo the visitor has added, samples included
-let currentRects = panelRects(canvas.width, canvas.height);
-let shotMode = false;
+let lastPanels = computePanels(state.size.w, state.size.h);
 
 function setStatus(message) {
-  statusLine.textContent = message;
+  elements.status.textContent = message;
 }
 
-/** Repaints the cover (with the editor's selection outline, except in a screenshot scene). */
-function redraw() {
-  currentRects = panelRects(canvas.width, canvas.height);
-  drawCover(ctx, canvas.width, canvas.height, state, { showSelection: !shotMode });
-}
-
-/** Marks one panel as the one being framed and syncs the framing controls to it. */
-function selectPanel(index) {
-  state.selectedIndex = index;
-  const panel = state.panels[index];
-  selectedLabel.textContent = `Panel ${index + 1} selected — drag it on the cover, scroll to zoom.`;
-  zoomSlider.value = panel.zoom;
-  xSlider.value = Math.round(panel.offsetX * 100);
-  ySlider.value = Math.round(panel.offsetY * 100);
-}
-
-/** Puts a photo into a panel, keeping the panel's framing. */
-function assignPhotoToPanel(panelIndex, photo) {
-  state.panels[panelIndex].photo = photo.img;
-  redraw();
-}
-
-/** Adds a loaded image to the tray and returns its photo record. */
-function registerPhoto(name, img) {
-  const photo = { name, img };
-  photos.push(photo);
-  const button = document.createElement('button');
-  button.type = 'button';
-  button.title = name;
-  const thumb = document.createElement('img');
-  thumb.src = img.src;
-  thumb.alt = name;
-  button.appendChild(thumb);
-  button.addEventListener('click', () => {
-    assignPhotoToPanel(state.selectedIndex, photo);
-    setStatus(`Panel ${state.selectedIndex + 1} now shows ${name}.`);
+function repaint() {
+  lastPanels = renderCover(elements.canvas, state, {
+    showSelection: !document.body.classList.contains('shot-cover'),
   });
-  tray.appendChild(button);
-  return photo;
+  syncFramingControls();
+  syncPanelChips();
 }
 
-/** Loads a bundled sample into the tray (once) and returns its photo record. */
-async function ensureSamplePhoto(stem) {
-  const found = photos.find((p) => p.name === stem);
-  if (found) return found;
-  return registerPhoto(stem, await loadSamplePhoto(stem));
+function selectedPhoto() {
+  return state.panels[state.selected]?.photo ?? null;
 }
 
-/**
- * The opening scene: the two samples woven through the panels at varied zooms, so the studio
- * opens on a finished-looking cover the visitor can pull apart.
- */
-function applyOpeningScene(hero, second) {
-  const plan = [
-    { photo: hero, zoom: 1.0, offsetX: 0, offsetY: 0 },
-    { photo: second, zoom: 1.3, offsetX: 0, offsetY: -0.2 },
-    { photo: hero, zoom: 1.45, offsetX: 0.1, offsetY: 0.25 },
-    { photo: second, zoom: 1.05, offsetX: 0, offsetY: 0.1 },
-    { photo: hero, zoom: 1.2, offsetX: -0.15, offsetY: -0.3 },
-  ];
-  plan.forEach((step, index) => Object.assign(state.panels[index], step));
-  redraw();
-}
-
-/** Adds every image file from a pick or a drop, filling empty panels in order. */
-async function addPhotoFiles(files) {
-  const images = [...files].filter((f) => f.type.startsWith('image/'));
-  for (const file of images) {
-    const photo = registerPhoto(file.name, await loadImageFromFile(file));
-    const empty = state.panels.findIndex((p) => !p.photo);
-    assignPhotoToPanel(empty >= 0 ? empty : state.selectedIndex, photo);
+function syncFramingControls() {
+  const photo = selectedPhoto();
+  const enabled = Boolean(photo);
+  for (const control of [elements.zoom, elements.panX, elements.panY, elements.resetFraming]) {
+    control.disabled = !enabled;
   }
-  if (images.length) setStatus(`${images.length} photo${images.length > 1 ? 's' : ''} added. Click a panel, then drag to frame it.`);
+  if (photo) {
+    elements.zoom.value = String(photo.zoom);
+    elements.panX.value = String(photo.panX);
+    elements.panY.value = String(photo.panY);
+  }
 }
 
-/** Switches the canvas to one of the post sizes and repaints. */
-function setPostSize(key) {
-  const [w, h] = POST_SIZES[key] ?? POST_SIZES['1080x1080'];
-  canvas.width = w;
-  canvas.height = h;
-  canvas.style.setProperty('--ar', String(w / h));
-  document.querySelectorAll('.size-chip').forEach((chip) => {
-    chip.setAttribute('aria-pressed', String(chip.dataset.size === key));
+function syncPanelChips() {
+  [...elements.panelChips.children].forEach((chip, index) => {
+    chip.classList.toggle('is-selected', index === state.selected);
+    chip.classList.toggle('has-photo', Boolean(state.panels[index].photo));
   });
-  redraw();
 }
 
-/** Switches the colour grade and repaints. */
-function setGrade(key) {
-  state.grade = key;
-  document.querySelectorAll('.grade-chip').forEach((chip) => {
-    chip.setAttribute('aria-pressed', String(chip.dataset.grade === key));
+function selectPanel(index) {
+  if (index < 0 || index >= PANEL_COUNT) return;
+  state.selected = index;
+  repaint();
+}
+
+function placePhotoInPanel(index, photo) {
+  state.panels[index] = { photo };
+}
+
+function setSize(w, h, options = {}) {
+  state.size = { w, h };
+  elements.canvas.width = w;
+  elements.canvas.height = h;
+  [...elements.sizeRow.children].forEach((chip) => {
+    chip.classList.toggle('is-selected', Number(chip.dataset.w) === w && Number(chip.dataset.h) === h);
   });
-  redraw();
+  if (!options.silent) repaint();
 }
 
-// --- Step 1: photos ---------------------------------------------------------
-
-const photoInput = document.getElementById('photo-input');
-document.getElementById('add-photos').addEventListener('click', () => photoInput.click());
-photoInput.addEventListener('change', () => addPhotoFiles(photoInput.files));
-document.getElementById('sample-driver').addEventListener('click', async () => {
-  assignPhotoToPanel(state.selectedIndex, await ensureSamplePhoto('neon-driver'));
-});
-document.getElementById('sample-pier').addEventListener('click', async () => {
-  assignPhotoToPanel(state.selectedIndex, await ensureSamplePhoto('sunset-pier'));
-});
-window.addEventListener('dragover', (e) => {
-  e.preventDefault();
-  document.body.classList.add('dragging');
-});
-window.addEventListener('dragleave', (e) => {
-  if (!e.relatedTarget) document.body.classList.remove('dragging');
-});
-window.addEventListener('drop', (e) => {
-  e.preventDefault();
-  document.body.classList.remove('dragging');
-  addPhotoFiles(e.dataTransfer.files);
-});
-
-// --- Step 2: framing --------------------------------------------------------
-
-function canvasPoint(event) {
-  const box = canvas.getBoundingClientRect();
-  return [
-    (event.clientX - box.left) * (canvas.width / box.width),
-    (event.clientY - box.top) * (canvas.height / box.height),
-  ];
+function setGrade(gradeId) {
+  state.grade = gradeId;
+  [...elements.gradeRow.children].forEach((button) => {
+    button.classList.toggle('is-selected', button.dataset.grade === gradeId);
+  });
 }
 
-let drag = null;
-canvas.addEventListener('pointerdown', (event) => {
-  const [x, y] = canvasPoint(event);
-  const index = panelIndexAt(currentRects, x, y);
-  if (index < 0) return;
-  selectPanel(index);
-  const panel = state.panels[index];
-  drag = { index, startX: x, startY: y, offsetX: panel.offsetX, offsetY: panel.offsetY };
-  canvas.setPointerCapture(event.pointerId);
-});
-canvas.addEventListener('pointermove', (event) => {
-  if (!drag) return;
-  const [x, y] = canvasPoint(event);
-  const rect = currentRects[drag.index];
-  const panel = state.panels[drag.index];
-  panel.offsetX = drag.offsetX + (x - drag.startX) / rect.w;
-  panel.offsetY = drag.offsetY + (y - drag.startY) / rect.h;
-  xSlider.value = Math.round(panel.offsetX * 100);
-  ySlider.value = Math.round(panel.offsetY * 100);
-  redraw();
-});
-canvas.addEventListener('pointerup', () => { drag = null; });
-canvas.addEventListener('wheel', (event) => {
-  event.preventDefault();
-  const [x, y] = canvasPoint(event);
-  const index = panelIndexAt(currentRects, x, y);
-  if (index < 0) return;
-  selectPanel(index);
-  const panel = state.panels[index];
-  panel.zoom = Math.min(4, Math.max(1, panel.zoom * (event.deltaY < 0 ? 1.07 : 0.93)));
-  zoomSlider.value = panel.zoom;
-  redraw();
-}, { passive: false });
+function setCaption(title, tagline) {
+  state.title = title;
+  state.tagline = tagline;
+  elements.title.value = title;
+  elements.tagline.value = tagline;
+}
 
-zoomSlider.addEventListener('input', () => {
-  state.panels[state.selectedIndex].zoom = Number(zoomSlider.value);
-  redraw();
-});
-xSlider.addEventListener('input', () => {
-  state.panels[state.selectedIndex].offsetX = Number(xSlider.value) / 100;
-  redraw();
-});
-ySlider.addEventListener('input', () => {
-  state.panels[state.selectedIndex].offsetY = Number(ySlider.value) / 100;
-  redraw();
-});
-document.getElementById('reset-framing').addEventListener('click', () => {
-  Object.assign(state.panels[state.selectedIndex], { zoom: 1, offsetX: 0, offsetY: 0 });
-  selectPanel(state.selectedIndex);
-  redraw();
-});
-document.getElementById('fill-all').addEventListener('click', () => {
-  const { photo } = state.panels[state.selectedIndex];
-  if (!photo) {
-    setStatus('The selected panel has no photo yet — add one first.');
+async function addFiles(fileList) {
+  const files = [...fileList].filter((file) => file.type.startsWith('image/'));
+  if (files.length === 0) {
+    setStatus('No image files there — try a JPG or PNG photo.');
     return;
   }
-  state.panels.forEach((panel) => { panel.photo = photo; });
-  redraw();
-  setStatus('Every panel now shows the same photo, each framed its own way.');
-});
-
-// --- Steps 3 to 5: caption, grade, size, export ------------------------------
-
-document.getElementById('caption-input').addEventListener('input', (e) => {
-  state.caption = e.target.value;
-  redraw();
-});
-document.getElementById('tagline-input').addEventListener('input', (e) => {
-  state.tagline = e.target.value;
-  redraw();
-});
-document.getElementById('caption-place').addEventListener('change', (e) => {
-  state.captionPlace = e.target.value;
-  redraw();
-});
-document.getElementById('caption-arc').addEventListener('change', (e) => {
-  state.arcTitle = e.target.checked;
-  redraw();
-});
-document.querySelectorAll('.grade-chip').forEach((chip) => {
-  chip.addEventListener('click', () => setGrade(chip.dataset.grade));
-});
-document.querySelectorAll('.size-chip').forEach((chip) => {
-  chip.addEventListener('click', () => setPostSize(chip.dataset.size));
-});
-document.getElementById('export-png').addEventListener('click', () => {
-  drawCover(ctx, canvas.width, canvas.height, state, { showSelection: false });
-  canvas.toBlob((blob) => {
-    const link = document.createElement('a');
-    link.href = URL.createObjectURL(blob);
-    link.download = `vice-coast-cover-${canvas.width}x${canvas.height}.png`;
-    link.click();
-    setStatus(`Saved ${link.download} — post it anywhere.`);
-    redraw();
-  }, 'image/png');
-});
-
-// --- Opening -----------------------------------------------------------------
-
-async function init() {
-  const shot = readShotConfig();
-  shotMode = Boolean(shot);
-  if (shot) {
-    document.getElementById('caption-input').value = shot.caption;
-    document.getElementById('tagline-input').value = shot.tagline;
-    state.caption = shot.caption;
-    state.tagline = shot.tagline;
-    if (shot.mode === 'cover') document.body.classList.add('shot-cover');
+  let target = state.selected;
+  for (const file of files) {
+    if (target >= PANEL_COUNT) break;
+    const photo = await loadPhotoFromFile(file);
+    placePhotoInPanel(target, photo);
+    target += 1;
   }
-  const hero = await ensureSamplePhoto(shot ? shot.photo : 'neon-driver');
-  const second = await ensureSamplePhoto(shot ? shot.photo2 : 'sunset-pier');
-  applyOpeningScene(hero.img, second.img);
-  setGrade(shot ? shot.grade : 'sunset');
-  setPostSize(shot ? shot.size : '1080x1080');
-  selectPanel(0);
-  await document.fonts.load('80px Anton');
-  await document.fonts.ready;
-  redraw();
-  if (shot) signalShotReady();
+  setStatus(files.length === 1 ? 'Photo placed. Drag it on the canvas to frame it.' : 'Photos placed across the panels.');
+  repaint();
 }
 
-init();
+async function addSample(sampleId) {
+  const photo = await loadSamplePhoto(sampleId);
+  placePhotoInPanel(state.selected, photo);
+  setStatus(`${photo.name} is in panel ${state.selected + 1}.`);
+  repaint();
+}
+
+function fillEveryPanelFromSelected() {
+  const source = selectedPhoto();
+  if (!source) {
+    setStatus('Pick a panel with a photo first, then fill the rest from it.');
+    return;
+  }
+  state.panels = state.panels.map(() => ({
+    photo: { image: source.image, name: source.name, zoom: source.zoom, panX: source.panX, panY: source.panY },
+  }));
+  setStatus('Every panel now shows that photo. Select a panel to frame it on its own.');
+  repaint();
+}
+
+function buildControls() {
+  for (const sample of SAMPLE_PHOTOS) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.textContent = sample.label;
+    button.addEventListener('click', () => addSample(sample.id));
+    elements.sampleRow.appendChild(button);
+  }
+
+  for (let i = 0; i < PANEL_COUNT; i += 1) {
+    const chip = document.createElement('button');
+    chip.type = 'button';
+    chip.textContent = i === 0 ? 'Hero' : `Panel ${i + 1}`;
+    chip.addEventListener('click', () => selectPanel(i));
+    elements.panelChips.appendChild(chip);
+  }
+
+  for (const gradeId of GRADE_IDS) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.dataset.grade = gradeId;
+    button.textContent = GRADES[gradeId].label;
+    button.addEventListener('click', () => {
+      setGrade(gradeId);
+      repaint();
+    });
+    elements.gradeRow.appendChild(button);
+  }
+
+  for (const size of POST_SIZES) {
+    const chip = document.createElement('button');
+    chip.type = 'button';
+    chip.dataset.w = String(size.w);
+    chip.dataset.h = String(size.h);
+    chip.textContent = size.label;
+    chip.addEventListener('click', () => setSize(size.w, size.h));
+    elements.sizeRow.appendChild(chip);
+  }
+}
+
+function canvasPoint(event) {
+  const box = elements.canvas.getBoundingClientRect();
+  return {
+    x: ((event.clientX - box.left) / box.width) * elements.canvas.width,
+    y: ((event.clientY - box.top) / box.height) * elements.canvas.height,
+  };
+}
+
+function wireCanvas() {
+  let drag = null;
+  elements.canvas.addEventListener('pointerdown', (event) => {
+    const point = canvasPoint(event);
+    const index = panelIndexAt(lastPanels, point.x, point.y);
+    if (index >= 0) selectPanel(index);
+    const photo = selectedPhoto();
+    if (!photo) return;
+    drag = { x: point.x, y: point.y };
+    elements.canvas.setPointerCapture(event.pointerId);
+  });
+  elements.canvas.addEventListener('pointermove', (event) => {
+    if (!drag) return;
+    const photo = selectedPhoto();
+    if (!photo) return;
+    const point = canvasPoint(event);
+    const panel = lastPanels[state.selected];
+    // Pan is a fraction of the cover-fit overflow, so dividing the pointer
+    // movement by that overflow (the spare width and height of the framed
+    // rectangle) makes the photo track the pointer exactly, at any zoom.
+    const framed = framedPhotoRect(photo, panel);
+    if (framed.spareX !== 0) photo.panX += (point.x - drag.x) / framed.spareX;
+    if (framed.spareY !== 0) photo.panY += (point.y - drag.y) / framed.spareY;
+    clampFraming(photo);
+    drag = point;
+    repaint();
+  });
+  const endDrag = () => {
+    drag = null;
+  };
+  elements.canvas.addEventListener('pointerup', endDrag);
+  elements.canvas.addEventListener('pointercancel', endDrag);
+  elements.canvas.addEventListener(
+    'wheel',
+    (event) => {
+      const photo = selectedPhoto();
+      if (!photo) return;
+      event.preventDefault();
+      photo.zoom *= event.deltaY < 0 ? 1.08 : 0.93;
+      clampFraming(photo);
+      repaint();
+    },
+    { passive: false },
+  );
+}
+
+function wireControls() {
+  elements.fileInput.addEventListener('change', () => {
+    addFiles(elements.fileInput.files ?? []);
+    elements.fileInput.value = '';
+  });
+  elements.dropZone.addEventListener('dragover', (event) => {
+    event.preventDefault();
+    elements.dropZone.classList.add('is-dragging');
+  });
+  elements.dropZone.addEventListener('dragleave', () => elements.dropZone.classList.remove('is-dragging'));
+  elements.dropZone.addEventListener('drop', (event) => {
+    event.preventDefault();
+    elements.dropZone.classList.remove('is-dragging');
+    addFiles(event.dataTransfer?.files ?? []);
+  });
+
+  elements.fillAll.addEventListener('click', fillEveryPanelFromSelected);
+  elements.resetFraming.addEventListener('click', () => {
+    const photo = selectedPhoto();
+    if (!photo) return;
+    photo.zoom = 1;
+    photo.panX = 0;
+    photo.panY = 0;
+    repaint();
+  });
+
+  const bindSlider = (control, key) => {
+    control.addEventListener('input', () => {
+      const photo = selectedPhoto();
+      if (!photo) return;
+      photo[key] = Number(control.value);
+      clampFraming(photo);
+      repaint();
+    });
+  };
+  bindSlider(elements.zoom, 'zoom');
+  bindSlider(elements.panX, 'panX');
+  bindSlider(elements.panY, 'panY');
+
+  elements.title.addEventListener('input', () => {
+    state.title = elements.title.value;
+    repaint();
+  });
+  elements.tagline.addEventListener('input', () => {
+    state.tagline = elements.tagline.value;
+    repaint();
+  });
+  elements.placement.addEventListener('change', () => {
+    state.captionPlacement = elements.placement.value;
+    repaint();
+  });
+  elements.arc.addEventListener('change', () => {
+    state.captionArc = elements.arc.checked;
+    repaint();
+  });
+
+  elements.exportButton.addEventListener('click', () => {
+    renderCover(elements.canvas, state, { showSelection: false });
+    elements.canvas.toBlob((blob) => {
+      if (!blob) return;
+      const link = document.createElement('a');
+      link.href = URL.createObjectURL(blob);
+      link.download = `vice-coast-cover-${state.size.w}x${state.size.h}.png`;
+      link.click();
+      setTimeout(() => URL.revokeObjectURL(link.href), 4000);
+      setStatus(`Exported a ${state.size.w} × ${state.size.h} PNG.`);
+      repaint();
+    }, 'image/png');
+  });
+}
+
+const studio = { state, setSize, setGrade, setCaption, placePhotoInPanel, selectPanel, repaint };
+
+buildControls();
+wireControls();
+wireCanvas();
+setSize(state.size.w, state.size.h, { silent: true });
+setGrade(state.grade);
+setCaption(state.title, state.tagline);
+repaint();
+
+if (document.fonts && document.fonts.load) {
+  document.fonts.load('80px Anton').then(() => repaint()).catch(() => {});
+}
+
+const shotRequest = readShotRequest();
+if (shotRequest) {
+  applyShotScene(shotRequest, studio).catch(() => {
+    window.__shotReady = true;
+  });
+}
