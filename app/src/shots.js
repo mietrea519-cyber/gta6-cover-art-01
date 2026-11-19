@@ -1,32 +1,73 @@
-// Fixed scenes for the maker's screenshots, in the starter's convention: the page is opened with
-// a query such as ?shot=cover&photo=neon-driver&photo2=sunset-pier&caption=Neon%20Coast&grade=neon
-// &size=1920x1080, the app sets that scene up, and window.__shotReady is set once it has painted.
-// shots.json at the repository root lists the scenes and the size each is captured at.
+// Fixed scenes used to take the screenshots, driven by the query string.
+//
+//   ?shot=cover   — only the finished poster, nothing else on the page.
+//   ?shot=editor  — the whole studio, with the scene loaded into it.
+//
+// Both modes understand the same parameters:
+//   photo    sample id for the hero panel (neon-driver or sunset-pier)
+//   photo2   sample id for the second panel, when a scene wants two photos
+//   caption  the big title line
+//   tagline  the smaller line under (or over) the title
+//   grade    sunset, neon or classic
+//   size     canvas size as WIDTHxHEIGHT, for example 1920x1080
+//
+// When the scene has painted, window.__shotReady is set to true so the
+// screenshot tooling knows the frame is final, fonts included.
 
-const SHOT_PARAM_DEFAULTS = {
-  photo: 'neon-driver',
-  photo2: 'sunset-pier',
-  caption: 'Neon Coast',
-  tagline: 'One city, no rules',
-  grade: 'sunset',
-  size: '1080x1080',
-};
+import { GRADE_IDS } from './grades.js';
+import { SAMPLE_PHOTOS, loadSamplePhoto } from './photos.js';
 
-/** Reads the shot configuration from the page's query string, or returns null for a normal visit. */
-export function readShotConfig() {
-  const query = new URLSearchParams(location.search);
+export function readShotRequest() {
+  const query = new URLSearchParams(window.location.search);
   const mode = query.get('shot');
   if (mode !== 'cover' && mode !== 'editor') return null;
-  const config = { mode };
-  for (const [key, fallback] of Object.entries(SHOT_PARAM_DEFAULTS)) {
-    config[key] = query.get(key) ?? fallback;
-  }
-  return config;
+  return { mode, query };
 }
 
-/** Tells the screenshot tool the scene is fully painted: two frames after this is called. */
-export function signalShotReady() {
-  requestAnimationFrame(() => requestAnimationFrame(() => {
-    window.__shotReady = true;
-  }));
+function parseSize(raw, fallback) {
+  const match = /^(\d{3,4})x(\d{3,4})$/.exec(raw ?? '');
+  if (!match) return fallback;
+  return { w: Number(match[1]), h: Number(match[2]) };
+}
+
+function knownSampleId(raw) {
+  return SAMPLE_PHOTOS.some((sample) => sample.id === raw) ? raw : SAMPLE_PHOTOS[0].id;
+}
+
+function knownGradeId(raw) {
+  return GRADE_IDS.includes(raw) ? raw : 'sunset';
+}
+
+export async function applyShotScene(request, studio) {
+  const { mode, query } = request;
+  if (mode === 'cover') document.body.classList.add('shot-cover');
+
+  const size = parseSize(query.get('size'), studio.state.size);
+  studio.setSize(size.w, size.h, { silent: true });
+  studio.setGrade(knownGradeId(query.get('grade')));
+  studio.setCaption(query.get('caption') ?? studio.state.title, query.get('tagline') ?? studio.state.tagline);
+
+  const heroPhoto = await loadSamplePhoto(knownSampleId(query.get('photo')));
+  studio.placePhotoInPanel(0, heroPhoto);
+  if (query.get('photo2')) {
+    const secondPhoto = await loadSamplePhoto(knownSampleId(query.get('photo2')));
+    studio.placePhotoInPanel(1, secondPhoto);
+  }
+
+  studio.selectPanel(0);
+  studio.repaint();
+
+  if (document.fonts && document.fonts.ready) {
+    try {
+      await document.fonts.ready;
+    } catch {
+      // A font that failed to load must not hold the scene hostage.
+    }
+  }
+  studio.repaint();
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      window.__shotReady = true;
+    });
+  });
 }
