@@ -1,42 +1,79 @@
-// Photo loading and cover-fit maths. Photos are read from the person's own machine and are never
-// uploaded anywhere: file picks and drops become object URLs, samples load from this app's files.
+// Photo loading and per-panel framing.
+//
+// A panel's photo is kept as a plain record:
+//   { image, name, zoom, panX, panY }
+// zoom is 1 or more (1 means the plain cover-fit), and panX / panY range
+// from -0.5 to 0.5, where 0 centres the overflow and the extremes push the
+// photo fully to one side. Keeping the framing as fractions means the same
+// record works unchanged at preview size and at export size, because the
+// preview canvas IS the export canvas in this app.
+//
+// Photos are only ever read on this machine: files come in through an
+// object URL created in the browser, and the bundled samples are plain
+// files that sit next to the app. Nothing is uploaded anywhere.
 
-/** Loads an image from a URL (an object URL or a path inside the app), resolving once it can be drawn. */
-export function loadImageFromUrl(url) {
+export const SAMPLE_PHOTOS = [
+  { id: 'neon-driver', label: 'Neon Driver', src: 'samples/neon-driver.jpg' },
+  { id: 'sunset-pier', label: 'Sunset Pier', src: 'samples/sunset-pier.jpg' },
+];
+
+export function freshFraming(image, name) {
+  return { image, name, zoom: 1, panX: 0, panY: 0 };
+}
+
+export function emptyPanel() {
+  return { photo: null };
+}
+
+export function loadImageFromSource(src) {
   return new Promise((resolve, reject) => {
-    const img = new Image();
-    img.onload = () => resolve(img);
-    img.onerror = reject;
-    img.src = url;
+    const image = new Image();
+    image.onload = () => resolve(image);
+    image.onerror = () => reject(new Error(`could not load image ${src}`));
+    image.src = src;
   });
 }
 
-/** Loads one picked or dropped file into an image, through an object URL that stays valid for the session. */
-export function loadImageFromFile(file) {
-  return loadImageFromUrl(URL.createObjectURL(file));
+export async function loadSamplePhoto(sampleId) {
+  const sample = SAMPLE_PHOTOS.find((entry) => entry.id === sampleId) ?? SAMPLE_PHOTOS[0];
+  const image = await loadImageFromSource(sample.src);
+  return freshFraming(image, sample.label);
 }
 
-/** Loads one of the bundled sample photos by its file stem, for example "neon-driver". */
-export function loadSamplePhoto(stem) {
-  return loadImageFromUrl(`samples/${stem}.jpg`);
+export async function loadPhotoFromFile(file) {
+  const objectUrl = URL.createObjectURL(file);
+  try {
+    const image = await loadImageFromSource(objectUrl);
+    return freshFraming(image, file.name);
+  } finally {
+    // The decoded image keeps its pixels after the URL is revoked.
+    setTimeout(() => URL.revokeObjectURL(objectUrl), 4000);
+  }
 }
 
-/**
- * The base cover fit: the scale at which an image exactly covers a rectangle, and the drawn size
- * at that scale. A panel's own zoom multiplies this scale.
- */
-export function coverFit(imageWidth, imageHeight, rectWidth, rectHeight) {
-  const scale = Math.max(rectWidth / imageWidth, rectHeight / imageHeight);
-  return { scale, width: imageWidth * scale, height: imageHeight * scale };
+// The rectangle a framed photo occupies inside a panel, in canvas pixels.
+// Cover-fit first (fill the panel, crop the overflow), then the zoom, then
+// the pan across whatever overflow remains.
+export function framedPhotoRect(photo, panel) {
+  const image = photo.image;
+  const coverScale = Math.max(panel.w / image.naturalWidth, panel.h / image.naturalHeight);
+  const scale = coverScale * photo.zoom;
+  const drawnW = image.naturalWidth * scale;
+  const drawnH = image.naturalHeight * scale;
+  const spareX = panel.w - drawnW;
+  const spareY = panel.h - drawnH;
+  return {
+    x: panel.x + spareX * (0.5 + photo.panX),
+    y: panel.y + spareY * (0.5 + photo.panY),
+    w: drawnW,
+    h: drawnH,
+    spareX,
+    spareY,
+  };
 }
 
-/**
- * Clamps a panel's offsets (fractions of the panel's size) so the drawn image always covers the
- * whole panel: it may slide at most half the overflow on each axis.
- */
-export function clampOffsets(panel, drawnWidth, drawnHeight, rectWidth, rectHeight) {
-  const maxX = Math.max(0, (drawnWidth - rectWidth) / 2) / rectWidth;
-  const maxY = Math.max(0, (drawnHeight - rectHeight) / 2) / rectHeight;
-  panel.offsetX = Math.min(maxX, Math.max(-maxX, panel.offsetX));
-  panel.offsetY = Math.min(maxY, Math.max(-maxY, panel.offsetY));
+export function clampFraming(photo) {
+  photo.zoom = Math.min(4, Math.max(1, photo.zoom));
+  photo.panX = Math.min(0.5, Math.max(-0.5, photo.panX));
+  photo.panY = Math.min(0.5, Math.max(-0.5, photo.panY));
 }
