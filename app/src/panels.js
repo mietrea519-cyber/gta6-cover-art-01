@@ -1,36 +1,69 @@
-// The collage layouts: one hero panel plus four supporting panels, as fractions of the canvas
-// (x, y, width, height from the top-left). Portrait and square posts share one layout, landscape
-// posts get a wide one with a full-height hero on the left. The caption is drawn over the collage,
-// poster-style, so the panels always fill the whole cover.
+// Panel geometry for the five-panel cover collage.
+//
+// A cover here is always one wide hero panel plus four smaller satellite
+// panels. Where the satellites sit depends on the shape of the canvas:
+//   - landscape: the hero owns the left, the satellites form a 2 x 2 block
+//     on the right;
+//   - portrait: the hero owns the top, the satellites form a 2 x 2 block
+//     underneath it;
+//   - square: the hero owns the top-left, two satellites stack on its right
+//     and two more run along the bottom.
+// Every rectangle this module returns is in canvas pixels, already inset by
+// half the gutter, so the renderer can clip and paint without extra maths.
 
-const PORTRAIT_PANELS = [
-  { x: 0.000, y: 0.000, w: 0.598, h: 0.618 }, // hero, top left
-  { x: 0.613, y: 0.000, w: 0.387, h: 0.300 }, // right, top
-  { x: 0.613, y: 0.315, w: 0.387, h: 0.303 }, // right, middle
-  { x: 0.000, y: 0.633, w: 0.490, h: 0.367 }, // bottom left
-  { x: 0.505, y: 0.633, w: 0.495, h: 0.367 }, // bottom right
-];
+export const PANEL_COUNT = 5;
+export const HERO_INDEX = 0;
 
-const LANDSCAPE_PANELS = [
-  { x: 0.000, y: 0.000, w: 0.418, h: 1.000 }, // hero, full height at the left
-  { x: 0.433, y: 0.000, w: 0.272, h: 0.488 }, // middle, top
-  { x: 0.433, y: 0.512, w: 0.272, h: 0.488 }, // middle, bottom
-  { x: 0.720, y: 0.000, w: 0.280, h: 0.488 }, // right, top
-  { x: 0.720, y: 0.512, w: 0.280, h: 0.488 }, // right, bottom
-];
-
-/** The five panel rectangles, in pixels, for a canvas of the given size. */
-export function panelRects(canvasWidth, canvasHeight) {
-  const layout = canvasWidth > canvasHeight ? LANDSCAPE_PANELS : PORTRAIT_PANELS;
-  return layout.map((p) => ({
-    x: p.x * canvasWidth,
-    y: p.y * canvasHeight,
-    w: p.w * canvasWidth,
-    h: p.h * canvasHeight,
-  }));
+function rectFromFractions(fx, fy, fw, fh, width, height, gutter) {
+  return {
+    x: fx * width + gutter / 2,
+    y: fy * height + gutter / 2,
+    w: fw * width - gutter,
+    h: fh * height - gutter,
+  };
 }
 
-/** The index of the panel under a point in canvas coordinates, or -1 when the point is on a seam. */
-export function panelIndexAt(rects, px, py) {
-  return rects.findIndex((r) => px >= r.x && px < r.x + r.w && py >= r.y && py < r.y + r.h);
+const LAYOUT_FRACTIONS = {
+  landscape: [
+    [0, 0, 0.56, 1],
+    [0.56, 0, 0.22, 0.5],
+    [0.78, 0, 0.22, 0.5],
+    [0.56, 0.5, 0.22, 0.5],
+    [0.78, 0.5, 0.22, 0.5],
+  ],
+  portrait: [
+    [0, 0, 1, 0.54],
+    [0, 0.54, 0.5, 0.23],
+    [0.5, 0.54, 0.5, 0.23],
+    [0, 0.77, 0.5, 0.23],
+    [0.5, 0.77, 0.5, 0.23],
+  ],
+  square: [
+    [0, 0, 0.64, 0.66],
+    [0.64, 0, 0.36, 0.33],
+    [0.64, 0.33, 0.36, 0.33],
+    [0, 0.66, 0.5, 0.34],
+    [0.5, 0.66, 0.5, 0.34],
+  ],
+};
+
+export function layoutNameFor(width, height) {
+  const ratio = width / height;
+  if (ratio > 1.12) return 'landscape';
+  if (ratio < 0.9) return 'portrait';
+  return 'square';
+}
+
+export function computePanels(width, height) {
+  const gutter = Math.max(6, Math.round(Math.min(width, height) * 0.012));
+  const fractions = LAYOUT_FRACTIONS[layoutNameFor(width, height)];
+  return fractions.map(([fx, fy, fw, fh]) => rectFromFractions(fx, fy, fw, fh, width, height, gutter));
+}
+
+export function panelIndexAt(panels, px, py) {
+  for (let i = panels.length - 1; i >= 0; i -= 1) {
+    const r = panels[i];
+    if (px >= r.x && px <= r.x + r.w && py >= r.y && py <= r.y + r.h) return i;
+  }
+  return -1;
 }
