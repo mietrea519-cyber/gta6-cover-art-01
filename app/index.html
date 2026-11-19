@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Vice Coast Cover Studio</title>
+<link rel="stylesheet" href="./style.css">
+</head>
+<body>
+<header class="brand">
+  <p class="brand-name">VICE COAST <span>COVER STUDIO</span></p>
+  <p class="brand-sub">Your photos in, poster out — a multi-panel cover art maker that runs entirely on your machine.</p>
+</header>
+<main class="layout">
+  <aside class="controls">
+    <section class="step">
+      <h2><span class="step-no">1</span> Photos</h2>
+      <div class="row">
+        <button id="add-photos" type="button">Add your photos</button>
+        <input id="photo-input" type="file" accept="image/*" multiple hidden>
+      </div>
+      <div class="row">
+        <button id="sample-driver" type="button" class="ghost">Sample: neon driver</button>
+        <button id="sample-pier" type="button" class="ghost">Sample: sunset pier</button>
+      </div>
+      <div id="photo-tray" class="tray" aria-label="Your photos"></div>
+      <p class="hint">…or drag photos anywhere onto this page. Click a photo to drop it into the selected panel.</p>
+    </section>
+    <section class="step">
+      <h2><span class="step-no">2</span> Frame the panel</h2>
+      <p id="selected-panel-label" class="selected-label">Panel 1 selected — drag it on the cover, scroll to zoom.</p>
+      <label class="slider">Zoom <input id="panel-zoom" type="range" min="1" max="4" step="0.01" value="1"></label>
+      <label class="slider">Shift across <input id="panel-x" type="range" min="-100" max="100" step="1" value="0"></label>
+      <label class="slider">Shift up / down <input id="panel-y" type="range" min="-100" max="100" step="1" value="0"></label>
+      <div class="row">
+        <button id="reset-framing" type="button" class="ghost">Reset framing</button>
+        <button id="fill-all" type="button" class="ghost">Fill every panel with this photo</button>
+      </div>
+    </section>
+    <section class="step">
+      <h2><span class="step-no">3</span> Caption</h2>
+      <label class="field">Title <input id="caption-input" type="text" maxlength="26" value="Neon Coast"></label>
+      <label class="field">Tagline <input id="tagline-input" type="text" maxlength="44" value="One city, no rules"></label>
+      <div class="row">
+        <label class="field inline">Place
+          <select id="caption-place">
+            <option value="bottom" selected>Bottom</option>
+            <option value="top">Top</option>
+          </select>
+        </label>
+        <label class="check"><input id="caption-arc" type="checkbox"> Arc the title</label>
+      </div>
+    </section>
+    <section class="step">
+      <h2><span class="step-no">4</span> Colour grade</h2>
+      <div class="row" role="group" aria-label="Colour grade">
+        <button type="button" class="chip grade-chip" data-grade="sunset">Vice Sunset</button>
+        <button type="button" class="chip grade-chip" data-grade="neon">Neon Night</button>
+        <button type="button" class="chip grade-chip" data-grade="classic">Classic Poster</button>
+      </div>
+    </section>
+    <section class="step">
+      <h2><span class="step-no">5</span> Size &amp; export</h2>
+      <div class="row" role="group" aria-label="Post size">
+        <button type="button" class="chip size-chip" data-size="1080x1080">1080 × 1080</button>
+        <button type="button" class="chip size-chip" data-size="1080x1350">1080 × 1350</button>
+        <button type="button" class="chip size-chip" data-size="1920x1080">1920 × 1080</button>
+      </div>
+      <button id="export-png" type="button" class="export">Export PNG</button>
+      <p id="status-line" class="status" role="status"></p>
+    </section>
+  </aside>
+  <section class="stage">
+    <canvas id="cover-canvas" width="1080" height="1080" aria-label="Your cover, live preview"></canvas>
+    <p id="drop-hint" class="drop-hint">Drop photos to add them</p>
+  </section>
+</main>
+<script type="module" src="./src/main.js"></script>
+</body>
+</html>
